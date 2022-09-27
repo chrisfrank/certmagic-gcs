@@ -26,6 +26,7 @@ var (
 type Storage struct {
 	bucket *storage.BucketHandle
 	aead   tink.AEAD
+	prefix string
 }
 
 // Interface guards
@@ -39,6 +40,7 @@ type StorageConfig struct {
 	AEAD tink.AEAD
 	// BucketName is the name of the GCS storage Bucket
 	BucketName string
+	Prefix     string
 	// ClientOptions GCS storage client options
 	ClientOptions []option.ClientOption
 }
@@ -55,12 +57,12 @@ func NewStorage(ctx context.Context, config StorageConfig) (*Storage, error) {
 	} else {
 		kp = new(cleartext)
 	}
-	return &Storage{bucket: bucket, aead: kp}, nil
+	return &Storage{bucket: bucket, aead: kp, prefix: config.Prefix}, nil
 }
 
 // Store puts value at key.
 func (s *Storage) Store(ctx context.Context, key string, value []byte) error {
-	w := s.bucket.Object(key).NewWriter(ctx)
+	w := s.objWithPrefix(key).NewWriter(ctx)
 
 	encrypted, err := s.aead.Encrypt(value, []byte(key))
 	if err != nil {
@@ -74,7 +76,7 @@ func (s *Storage) Store(ctx context.Context, key string, value []byte) error {
 
 // Load retrieves the value at key.
 func (s *Storage) Load(ctx context.Context, key string) ([]byte, error) {
-	rc, err := s.bucket.Object(key).NewReader(ctx)
+	rc, err := s.objWithPrefix(key).NewReader(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return nil, fs.ErrNotExist
 	}
@@ -99,7 +101,7 @@ func (s *Storage) Load(ctx context.Context, key string) ([]byte, error) {
 // returned only if the key still exists
 // when the method returns.
 func (s *Storage) Delete(ctx context.Context, key string) error {
-	err := s.bucket.Object(key).Delete(ctx)
+	err := s.objWithPrefix(key).Delete(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return fs.ErrNotExist
 	}
@@ -112,7 +114,7 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 // Exists returns true if the key exists
 // and there was no error checking.
 func (s *Storage) Exists(ctx context.Context, key string) bool {
-	_, err := s.bucket.Object(key).Attrs(ctx)
+	_, err := s.objWithPrefix(key).Attrs(ctx)
 	return err != storage.ErrObjectNotExist
 }
 
@@ -146,7 +148,7 @@ func (s *Storage) List(ctx context.Context, prefix string, recursive bool) ([]st
 // Stat returns information about key.
 func (s *Storage) Stat(ctx context.Context, key string) (certmagic.KeyInfo, error) {
 	var keyInfo certmagic.KeyInfo
-	attr, err := s.bucket.Object(key).Attrs(ctx)
+	attr, err := s.objWithPrefix(key).Attrs(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return keyInfo, fs.ErrNotExist
 	}
@@ -182,7 +184,7 @@ func (s *Storage) Stat(ctx context.Context, key string) (certmagic.KeyInfo, erro
 // can be obtained).
 func (s *Storage) Lock(ctx context.Context, key string) error {
 	lockKey := s.objLockName(key)
-	obj := s.bucket.Object(lockKey)
+	obj := s.objWithPrefix(lockKey)
 	for {
 		attrs, err := obj.Attrs(ctx)
 		// create the lock if it doesn't exists
@@ -228,7 +230,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 // out. Unlock cleans up any resources allocated during Lock.
 func (s *Storage) Unlock(ctx context.Context, key string) error {
 	lockKey := s.objLockName(key)
-	obj := s.bucket.Object(lockKey)
+	obj := s.objWithPrefix(lockKey)
 	_, err := obj.Update(ctx, storage.ObjectAttrsToUpdate{TemporaryHold: false})
 	if err == storage.ErrObjectNotExist {
 		return nil
@@ -244,6 +246,11 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 
 func (s *Storage) objLockName(key string) string {
 	return key + ".lock"
+}
+
+func (s *Storage) objWithPrefix(key string) *storage.ObjectHandle {
+	prefixed := s.prefix + key
+	return s.bucket.Object(prefixed)
 }
 
 // cleartext implements tink.AAED interface, but simply store the object in plaintext

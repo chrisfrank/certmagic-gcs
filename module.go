@@ -23,6 +23,7 @@ var (
 type CaddyStorageGCS struct {
 	// BucketName is the name of the storage bucket.
 	BucketName string `json:"bucket-name"`
+	Prefix     string `json:prefix"`
 	// EncryptionKeySet is the path of a json tink encryption keyset
 	EncryptionKeySet string `json:"encryption-key-set"`
 }
@@ -45,6 +46,7 @@ func (CaddyStorageGCS) CaddyModule() caddy.ModuleInfo {
 func (s *CaddyStorageGCS) CertMagicStorage() (certmagic.Storage, error) {
 	config := StorageConfig{
 		BucketName: s.BucketName,
+		Prefix:     s.Prefix,
 	}
 
 	if len(s.EncryptionKeySet) > 0 {
@@ -92,6 +94,8 @@ func (s *CaddyStorageGCS) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		switch key {
 		case "bucket-name":
 			s.BucketName = value
+		case "prefix":
+			s.Prefix = value
 		case "encryption-key-set":
 			s.EncryptionKeySet = value
 		}
